@@ -251,6 +251,9 @@ git checkout 388e8bddd8a5443e284a7f70ad103d03f3f461c5
 ```
 
 Then, download CNOS's detections:
+
+> Render custom templates for onboarding (restored tool): `python -m src.scripts.render_custom_templates --help`.
+
 ```
 # download gigaPose's checkpoints 
 python -m src.scripts.download_cnos_bop23
@@ -291,7 +294,11 @@ ln -s $ROOT_DIR/datasets/lmo/test $ROOT_DIR/datasets/lmoWonder3d/test
 ln -s $ROOT_DIR/datasets/lmo/test_targets_bop19.json $ROOT_DIR/datasets/lmoWonder3d/test_targets_bop19.json
 
 # Onboarding by rendering templates from reconstructed 3D models
-python -m src.scripts.render_custom_templates custom_dataset_name=lmoWonder3d
+python -m src.scripts.render_custom_templates \
+  --root_dir $ROOT_DIR/datasets \
+  --dataset_name lmoWonder3d \
+  --num_workers 8 \
+  --num_gpus 1
 
 # now, it can be tested as a normal dataset as in the previous section
 python test.py test_dataset_name=lmoWonder3d run_id=$NAME_RUN
