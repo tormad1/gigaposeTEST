@@ -1,6 +1,3 @@
-<div align="center">
-<h2>
-GigaPose: Fast and Robust Novel Object Pose Estimation 
 
 via One Correspondence
 <p></p>
