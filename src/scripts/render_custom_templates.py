@@ -4,6 +4,7 @@ from tqdm import tqdm
 import time
 from functools import partial
 import multiprocessing
+import subprocess
 import hydra
 from omegaconf import OmegaConf
 import glob
@@ -13,6 +14,35 @@ from src.lib3d.template_transform import get_obj_poses_from_template_level
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def parse_object_id(path, fallback_idx=None):
+    stem = Path(path).stem
+    if stem.startswith("obj_"):
+        return int(stem[4:])
+    if stem.isdigit():
+        return int(stem)
+    if fallback_idx is not None:
+        return fallback_idx + 1
+    raise ValueError(
+        f"Cannot parse object id from file name '{stem}'. Expected obj_XXXXXX, XXXXXX, or provide fallback index."
+    )
+
+
+def convert_fbx_to_obj(fbx_path, obj_path):
+    obj_path = Path(obj_path)
+    obj_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "blender",
+        "-b",
+        "--python",
+        "./src/lib3d/convert_fbx_to_obj.py",
+        "--",
+        str(fbx_path),
+        str(obj_path),
+    ]
+    subprocess.run(cmd, check=True)
+    return obj_path
 
 
 def call_render(
@@ -80,12 +110,23 @@ def render(cfg) -> None:
 
     cad_paths = list(cad_dir.glob("*.ply"))
     cad_paths += list(cad_dir.glob("*.obj"))
+    cad_paths += list(cad_dir.glob("*.fbx"))
     logger.info(f"Found {len(list(cad_paths))} objects in {cad_dir}")
     logger.info(f"Found {len(list(cad_paths))} objects")
 
+    converted_dir = dataset_save_dir / "_converted"
+    os.makedirs(converted_dir, exist_ok=True)
+
     output_dirs = []
-    for cad_path in cad_paths:
-        object_id = int(os.path.basename(cad_path).split(".")[0][4:])
+    for idx, cad_path in enumerate(cad_paths):
+        object_id = parse_object_id(cad_path, fallback_idx=idx)
+
+        if str(cad_path).endswith(".fbx"):
+            obj_converted_path = converted_dir / f"obj_{object_id:06d}.obj"
+            logger.info(f"Converting FBX -> OBJ: {cad_path} -> {obj_converted_path}")
+            convert_fbx_to_obj(cad_path, obj_converted_path)
+            cad_path = obj_converted_path
+
         output_dir = dataset_save_dir / f"{object_id:06d}"
         output_dirs.append(output_dir)
 
