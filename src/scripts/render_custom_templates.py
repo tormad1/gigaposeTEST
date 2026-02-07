@@ -1,13 +1,13 @@
+import argparse
+import multiprocessing as mp
 import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
 import numpy as np
 from tqdm import tqdm
-import time
-from functools import partial
-import multiprocessing
-import hydra
-from omegaconf import OmegaConf
-import glob
-from pathlib import Path
 
 from src.lib3d.template_transform import get_obj_poses_from_template_level
 from src.utils.logging import get_logger
@@ -15,110 +15,110 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def call_render(
-    idx_obj,
-    list_cad_path,
-    list_output_dir,
-    obj_pose_path,
-    disable_output,
-    num_gpus,
-    use_blenderProc,
-):
-    output_dir = list_output_dir[idx_obj]
-    cad_path = list_cad_path[idx_obj]
-    if os.path.exists(output_dir):
-        os.system("rm -r {}".format(output_dir))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+def parse_args():
+    p = argparse.ArgumentParser("Render custom templates for onboarding")
+    p.add_argument("--root_dir", required=True, help="Root dataset dir containing <dataset_name>/models")
+    p.add_argument("--dataset_name", required=True, help="Custom dataset name (folder under root_dir)")
+    p.add_argument("--num_workers", type=int, default=max(1, os.cpu_count() // 2))
+    p.add_argument("--num_gpus", type=int, default=1)
+    p.add_argument("--level_templates", type=int, default=1)
+    p.add_argument("--pose_distribution", default="all", choices=["all", "upper"])
+    p.add_argument("--translation_scale", type=float, default=0.4, help="Template camera distance scale")
+    p.add_argument("--disable_output", action="store_true")
+    p.add_argument("--overwrite", action="store_true")
+    return p.parse_args()
 
-    gpus_device = idx_obj % num_gpus
-    os.makedirs(output_dir, exist_ok=True)
-    if use_blenderProc:  # TODO: remove blenderProc
-        command = f"blenderproc run ./src/lib3d/blenderproc.py {cad_path} {obj_pose_path} {output_dir} {gpus_device}"
-    else:  # TODO: understand why this is not working for tless and itodd
-        command = f"python -m src.custom_megapose.call_panda3d {cad_path} {obj_pose_path} {output_dir} {gpus_device}"
 
-    if disable_output:
-        command += " true"
-    else:
-        command += " false"
-    command += " true"  # scale translation to meter
-    os.system(command)
+def render_one(job):
+    idx, cad_path, obj_pose_path, output_dir, num_gpus, disable_output = job
 
-    # make sure the number of rendered images is correct
-    num_images = len(glob.glob(f"{output_dir}/*.png"))
-    if num_images == len(np.load(obj_pose_path)) * 2:
+    if output_dir.exists() and not any(output_dir.glob("*.png")):
+        pass
+    elif output_dir.exists() and any(output_dir.glob("*.png")):
+        # already rendered
         return True
-    else:
-        logger.info(f"Found only {num_images} for  {cad_path} {obj_pose_path}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    gpu_id = idx % max(1, num_gpus)
+    cmd = [
+        "blenderproc",
+        "run",
+        "./src/lib3d/blenderproc.py",
+        str(cad_path),
+        str(obj_pose_path),
+        str(output_dir),
+        str(gpu_id),
+        "true" if disable_output else "false",
+        "true",
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError:
+        logger.exception(f"Render failed for {cad_path}")
         return False
 
+    num_png = len(list(output_dir.glob("*.png")))
+    expected = len(np.load(obj_pose_path)) * 2  # rgb + depth
+    ok = num_png == expected
+    if not ok:
+        logger.warning(f"Rendered {num_png}/{expected} images for {cad_path}")
+    return ok
 
-@hydra.main(
-    version_base=None,
-    config_path="../../configs",
-    config_name="train",
-)
-def render(cfg) -> None:
-    num_gpus = 4
-    disable_output = True
 
-    OmegaConf.set_struct(cfg, False)
-    root_dir = Path(cfg.data.test.root_dir)
-    root_save_dir = root_dir / "templates"
-    template_poses = get_obj_poses_from_template_level(level=1, pose_distribution="all")
-    template_poses[:, :3, 3] *= 0.4  # zoom to object
-    dataset_name = cfg.custom_dataset_name
+def main():
+    args = parse_args()
 
-    dataset_save_dir = root_save_dir / f"{dataset_name}"
-    logger.info(f"Rendering templates for {dataset_name}")
-    os.makedirs(dataset_save_dir, exist_ok=True)
-    obj_pose_dir = dataset_save_dir / "object_poses"
-    os.makedirs(obj_pose_dir, exist_ok=True)
-
+    root_dir = Path(args.root_dir)
+    dataset_name = args.dataset_name
     cad_dir = root_dir / dataset_name / "models"
+    save_root = root_dir / "templates" / dataset_name
+    pose_dir = save_root / "object_poses"
 
-    cad_paths = list(cad_dir.glob("*.ply"))
-    cad_paths += list(cad_dir.glob("*.obj"))
-    logger.info(f"Found {len(list(cad_paths))} objects in {cad_dir}")
-    logger.info(f"Found {len(list(cad_paths))} objects")
+    if not cad_dir.exists():
+        raise FileNotFoundError(f"CAD directory not found: {cad_dir}")
 
-    output_dirs = []
-    for cad_path in cad_paths:
-        object_id = int(os.path.basename(cad_path).split(".")[0][4:])
-        output_dir = dataset_save_dir / f"{object_id:06d}"
-        output_dirs.append(output_dir)
+    if args.overwrite and save_root.exists():
+        shutil.rmtree(save_root)
 
-        obj_pose_path = os.path.join(obj_pose_dir, f"{object_id:06d}.npy")
-        np.save(obj_pose_path, template_poses)
+    save_root.mkdir(parents=True, exist_ok=True)
+    pose_dir.mkdir(parents=True, exist_ok=True)
 
-    os.makedirs(dataset_save_dir, exist_ok=True)
-
-    pool = multiprocessing.Pool(processes=int(cfg.machine.num_workers))
-
-    logger.info("Start rendering for {} objects".format(len(cad_paths)))
-    start_time = time.time()
-    pool = multiprocessing.Pool(processes=cfg.machine.num_workers)
-    call_render_ = partial(
-        call_render,
-        list_cad_path=cad_paths,
-        list_output_dir=output_dirs,
-        obj_pose_path=obj_pose_path,
-        disable_output=disable_output,
-        num_gpus=num_gpus,
-        use_blenderProc=True if dataset_name in ["tless", "itodd"] else False,
+    template_poses = get_obj_poses_from_template_level(
+        level=args.level_templates,
+        pose_distribution=args.pose_distribution,
     )
-    values = list(
-        tqdm(
-            pool.imap_unordered(call_render_, range(len(cad_paths))),
-            total=len(cad_paths),
-        )
-    )
-    correct_values = [val for val in values]
-    logger.info(f"Finished for {len(correct_values)}/{len(cad_paths)} objects")
-    finish_time = time.time()
-    logger.info(f"Total time {len(cad_paths)}: {finish_time - start_time}")
+    template_poses[:, :3, 3] *= args.translation_scale
+
+    cad_paths = sorted(list(cad_dir.glob("*.ply")) + list(cad_dir.glob("*.obj")))
+    if len(cad_paths) == 0:
+        raise RuntimeError(f"No CAD files found in {cad_dir} (.ply/.obj)")
+
+    jobs = []
+    for idx, cad_path in enumerate(cad_paths):
+        stem = cad_path.stem
+        if stem.startswith("obj_"):
+            obj_id = int(stem.split("obj_")[-1])
+        else:
+            obj_id = int(stem)
+
+        out_dir = save_root / f"{obj_id:06d}"
+        pose_path = pose_dir / f"{obj_id:06d}.npy"
+        np.save(pose_path, template_poses)
+        jobs.append((idx, cad_path, pose_path, out_dir, args.num_gpus, args.disable_output))
+
+    logger.info(f"Rendering {len(jobs)} objects from {cad_dir}")
+    logger.info(f"Saving templates to {save_root}")
+
+    t0 = time.time()
+    with mp.Pool(processes=args.num_workers) as pool:
+        values = list(tqdm(pool.imap_unordered(render_one, jobs), total=len(jobs)))
+
+    num_ok = sum(1 for v in values if v)
+    dt = time.time() - t0
+    logger.info(f"Finished: {num_ok}/{len(jobs)} objects rendered correctly in {dt:.1f}s")
 
 
 if __name__ == "__main__":
-    render()
+    main()
