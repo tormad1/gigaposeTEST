@@ -254,6 +254,9 @@ git checkout 388e8bddd8a5443e284a7f70ad103d03f3f461c5
 ```
 
 Then, download CNOS's detections:
+
+> Render custom templates for onboarding (restored tool): `python -m src.scripts.render_custom_templates --help`.
+
 ```
 # download gigaPose's checkpoints 
 python -m src.scripts.download_cnos_bop23
@@ -294,7 +297,11 @@ ln -s $ROOT_DIR/datasets/lmo/test $ROOT_DIR/datasets/lmoWonder3d/test
 ln -s $ROOT_DIR/datasets/lmo/test_targets_bop19.json $ROOT_DIR/datasets/lmoWonder3d/test_targets_bop19.json
 
 # Onboarding by rendering templates from reconstructed 3D models
-python -m src.scripts.render_custom_templates custom_dataset_name=lmoWonder3d
+python -m src.scripts.render_custom_templates \
+  --root_dir $ROOT_DIR/datasets \
+  --dataset_name lmoWonder3d \
+  --num_workers 8 \
+  --num_gpus 1
 
 # now, it can be tested as a normal dataset as in the previous section
 python test.py test_dataset_name=lmoWonder3d run_id=$NAME_RUN
@@ -330,3 +337,37 @@ Unless otherwise specified, all code in this repository is made available under 
 This code is heavily borrowed from [MegaPose](https://github.com/megapose6d/megapose6d) and [CNOS](https://github.com/nv-nguyen/cnos). 
 
 The authors thank Jonathan Tremblay, Medéric Fourmy, Yann Labbé, Michael Ramamonjisoa and Constantin Aronssohn for their help and valuable feedbacks!
+
+
+## RGB-only Golden Test (minimal inference entrypoint)
+
+Use `golden_test.py` to run coarse GigaPose inference on a single RGB crop/full image with external checkpoint + template DB (no refinement pipeline).
+
+```bash
+python golden_test.py \
+  --weights /path/to/gigaPose_v1.ckpt \
+  --root_dir /path/to/datasets \
+  --template_dir /path/to/datasets/templates \
+  --dataset_name lmo \
+  --label 1 \
+  --K 572.4114,573.57043,320,240 \
+  --image_rgb /path/to/frame.png \
+  --bbox 100,120,300,360 \
+  --output_dir ./outputs_golden
+```
+
+Or if you already have a cropped ROI:
+
+```bash
+python golden_test.py \
+  --weights /path/to/gigaPose_v1.ckpt \
+  --root_dir /path/to/datasets \
+  --template_dir /path/to/datasets/templates \
+  --dataset_name lmo \
+  --label 1 \
+  --K 572.4114,573.57043,320,240 \
+  --crop_rgb /path/to/roi.png \
+  --output_dir ./outputs_golden
+```
+
+Outputs are written to `OUTPUT_DIR/predictions/0.npz` with `poses` and `scores`.
