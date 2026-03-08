@@ -166,6 +166,112 @@ ln -s /path/to/datasets/gso $ROOT/datasets/gso
 </details>
 
 
+## Inference only (no training) :zap:
+
+If you already have:
+- a downloaded GigaPose checkpoint,
+- a pre-built template database,
+- and a dataset in BOP format,
+
+then you do **not** need to run training. The main pose-estimation entrypoint is:
+
+```bash
+python test.py ...
+```
+
+`test.py` runs the coarse GigaPose pose estimation from detections + templates. `refine.py` is optional and only adds a MegaPose refinement stage after the coarse predictions are written.
+
+### Required files
+
+By default, the code expects the following structure under `user.local_root_dir` (default: `./gigaPose_datasets`):
+
+```text
+$ROOT_DIR/
+├── datasets/
+│   ├── <dataset_name>/               # BOP dataset you want to run on
+│   ├── default_detections/           # input detections used at test time
+│   └── templates/
+│       └── <dataset_name>/           # your template DB
+└── pretrained/
+    └── gigaPose_v1.ckpt              # your GigaPose checkpoint
+```
+
+If your files are stored elsewhere, pass them as Hydra overrides:
+- `user.local_root_dir=/abs/path/to/root`
+- `model.checkpoint_path=/abs/path/to/model.ckpt`
+- `data.test.dataloader.template_config.dir=/abs/path/to/templates`
+
+> **Important:** set `data.test.dataloader.template_config.dir` to the **parent** templates folder.  
+> The loader automatically appends `/<dataset_name>` internally, so do **not** point it directly at `.../templates/<dataset_name>`.
+
+### Minimal inference command
+
+For 6D localization (pose estimation for known target objects in supported core BOP datasets):
+
+```bash
+export ROOT_DIR=/abs/path/to/gigaPose_datasets
+export DATASET_NAME=lmo
+export RUN_NAME=inference_only
+
+python test.py \
+  user.local_root_dir=$ROOT_DIR \
+  test_dataset_name=$DATASET_NAME \
+  run_id=$RUN_NAME \
+  test_setting=localization
+```
+
+For 6D detection:
+
+```bash
+python test.py \
+  user.local_root_dir=$ROOT_DIR \
+  test_dataset_name=hope \
+  run_id=inference_only \
+  test_setting=detection
+```
+
+### Using your own checkpoint and template DB
+
+If you already downloaded a checkpoint and have your own template DB location, override both paths explicitly:
+
+```bash
+python test.py \
+  user.local_root_dir=/abs/path/to/gigaPose_datasets \
+  test_dataset_name=lmo \
+  run_id=my_run \
+  test_setting=localization \
+  model.checkpoint_path=/abs/path/to/my_gigapose.ckpt \
+  data.test.dataloader.template_config.dir=/abs/path/to/templates
+```
+
+This command is the one that actually produces the coarse pose estimates from your template DB.
+
+### Output files
+
+Predictions are written under:
+
+```text
+$ROOT_DIR/results/large_<run_id>/predictions/
+```
+
+The final BOP-format CSV is named like:
+
+```text
+large-pbrreal-rgb-mmodel_<dataset_name>-test_<run_id>.csv
+```
+
+### Optional refinement
+
+If you also want the MegaPose refinement stage after coarse inference:
+
+```bash
+python refine.py \
+  user.local_root_dir=$ROOT_DIR \
+  test_dataset_name=$DATASET_NAME \
+  run_id=$RUN_NAME \
+  test_setting=localization
+```
+
 ##  Testing on [BOP datasets](https://bop.felk.cvut.cz/datasets/) :rocket:
 
 <p align="center">
