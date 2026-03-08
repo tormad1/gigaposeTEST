@@ -175,6 +175,30 @@ ln -s /path/to/datasets/gso $ROOT/datasets/gso
 If you want to test on [BOP challenge 2024](https://bop.felk.cvut.cz/challenges/bop-challenge-2024/) datasets, please follow the instructions below:
 <details><summary>Click to expand</summary>
 
+If you already have a template DB and only want inference, run:
+```
+# set this once if your datasets/templates are not under ./gigaPose_datasets
+export ROOT_DIR=/path/to/gigaPose_datasets
+
+# example: inference on LMO using an existing run/checkpoint setup
+python test.py \
+  machine.root_dir=$ROOT_DIR \
+  test_dataset_name=lmo \
+  run_id=$NAME_RUN \
+  test_setting=localization
+```
+
+If templates are stored in a custom location, override the template DB root:
+```
+python test.py \
+  machine.root_dir=$ROOT_DIR \
+  test_dataset_name=lmo \
+  run_id=$NAME_RUN \
+  test_setting=localization \
+  data.test.dataloader.template_config.dir=/absolute/path/to/templates
+```
+`data.test.dataloader.template_config.dir` must point to the templates root (the folder that contains dataset subfolders such as `lmo/`, `hope/`, etc.).
+
 1. Running coarse prediction on a single dataset:
 ```
 # for 6D detection task
